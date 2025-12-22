@@ -1,0 +1,30 @@
+# Example configuration for VSCode Spark Executor
+# Copy this to config.yaml and update with your settings
+
+environment: dev
+
+repository:
+  git:
+    url: https://github.com/YOUR_USERNAME/spark-test-repo.git
+    branch: main
+    pat_token: ${GIT_PAT_TOKEN}  # Set in .env file
+  script_file: scripts/analysis.py
+
+outputs:
+  - variable: total_count
+    data_type: integer
+  - variable: department_stats
+    data_type: dict
+
+# Optional: Override Spark configuration
+spark:
+  driver_cores: 1
+  driver_memory: 512m
+  executor_count: 1
+  executor_cores: 1
+  executor_memory: 512m
+
+# Optional: Execution options
+options:
+  timeout_seconds: 3000
+  verbose_logging: false

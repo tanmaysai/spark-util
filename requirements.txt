@@ -1,0 +1,8 @@
+# Custom dependencies for spark-test-repo
+# These will be installed during Docker image build
+
+# Data validation
+cerberus==1.3.5
+
+# Additional date utilities (beyond pandas)
+python-dateutil==2.8.2
