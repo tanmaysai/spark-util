@@ -1,9 +1,24 @@
 # Test pipeline for validating Azure DevOps → Docker → ACR flow
-# This builds an image from the spark-util repo itself (no dynamic cloning)
+# Tests FULL flow including dynamic git repository cloning
 
 trigger: none  # Manual trigger only for testing
 
 parameters:
+  - name: gitUrl
+    type: string
+    displayName: "Git Repository URL"
+    default: "https://github.com/your-org/spark-util.git"
+
+  - name: gitBranch
+    type: string
+    displayName: "Git Branch"
+    default: "main"
+
+  - name: gitCommit
+    type: string
+    displayName: "Git Commit SHA (optional)"
+    default: ""
+
   - name: imageTag
     type: string
     displayName: "Image Tag"
@@ -13,7 +28,7 @@ variables:
   acrRegistry: 'crescendoimages.azurecr.io'
   acrRepository: 'pyspark-script-runner'
   baseImageTag: 'test9'
-  fullImagePath: $(acrRegistry)/$(acrRepository):$(imageTag)
+  fullImagePath: $(acrRegistry)/$(acrRepository):${{ parameters.imageTag }}
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -25,29 +40,53 @@ stages:
       - job: BuildImage
         displayName: 'Build Docker Image'
         steps:
-          - checkout: self  # Checkout spark-util repo
+          - checkout: none  # Don't checkout pipeline repo
 
           - script: |
               echo "=== Build Configuration ==="
-              echo "Repository: $(Build.Repository.Name)"
-              echo "Branch: $(Build.SourceBranchName)"
-              echo "Commit: $(Build.SourceVersion)"
-              echo "Image Tag: $(imageTag)"
+              echo "Git URL: ${{ parameters.gitUrl }}"
+              echo "Git Branch: ${{ parameters.gitBranch }}"
+              echo "Git Commit: ${{ parameters.gitCommit }}"
+              echo "Image Tag: ${{ parameters.imageTag }}"
               echo "Full Image Path: $(fullImagePath)"
               echo "Base Image: $(acrRegistry)/$(acrRepository):$(baseImageTag)"
+            displayName: 'Print Build Configuration'
+
+          - script: |
+              # Extract repository name from URL
+              REPO_NAME=$(basename "${{ parameters.gitUrl }}" .git)
+              echo "Repository name: $REPO_NAME"
+
+              # Clone the repository (publicly accessible for testing)
+              # NOTE: For private repos, you'd need to inject a PAT token
+              echo "Cloning repository..."
+              git clone --depth 1 --branch "${{ parameters.gitBranch }}" "${{ parameters.gitUrl }}" user-repo
+
+              cd user-repo
+
+              # Checkout specific commit if provided
+              if [ -n "${{ parameters.gitCommit }}" ]; then
+                echo "Fetching specific commit..."
+                git fetch origin ${{ parameters.gitCommit }} --depth=1
+                git checkout ${{ parameters.gitCommit }}
+              fi
+
               echo ""
-              echo "=== Repository Contents ==="
+              echo "=== Repository cloned successfully ==="
               ls -la
               echo ""
+
               if [ -f requirements.txt ]; then
                 echo "=== requirements.txt ==="
                 cat requirements.txt
               else
                 echo "No requirements.txt found"
               fi
-            displayName: 'Print Build Configuration'
+            displayName: 'Clone Git Repository'
 
           - script: |
+              cd user-repo
+
               # Generate Dockerfile
               cat > Dockerfile.test << 'DOCKERFILE'
               # Base image with Spark and pre-installed packages
@@ -84,10 +123,10 @@ stages:
               containerRegistry: 'crescendoimages-acr'  # Service connection name
               repository: '$(acrRepository)'
               command: 'buildAndPush'
-              Dockerfile: 'Dockerfile.test'
-              buildContext: '.'
+              Dockerfile: 'user-repo/Dockerfile.test'
+              buildContext: 'user-repo'
               tags: |
-                $(imageTag)
+                ${{ parameters.imageTag }}
               arguments: '--platform linux/amd64'
 
           - script: |
@@ -95,8 +134,15 @@ stages:
               echo "=== ✅ Build Summary ==="
               echo "Image built and pushed successfully!"
               echo "Image: $(fullImagePath)"
-              echo "Tag: $(imageTag)"
+              echo "Tag: ${{ parameters.imageTag }}"
               echo ""
               echo "To test this image:"
               echo "  docker pull $(fullImagePath)"
+              echo ""
+              echo "Built from:"
+              echo "  Repository: ${{ parameters.gitUrl }}"
+              echo "  Branch: ${{ parameters.gitBranch }}"
+              if [ -n "${{ parameters.gitCommit }}" ]; then
+                echo "  Commit: ${{ parameters.gitCommit }}"
+              fi
             displayName: 'Build Summary'
