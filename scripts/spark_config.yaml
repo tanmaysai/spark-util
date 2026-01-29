@@ -1,0 +1,14 @@
+repository:
+  git:
+    url: https://github.com/tanmaysai/spark-util.git
+    branch: main
+    pat_token: ${GIT_PAT_TOKEN}
+  script_file: scripts/analysis.py
+
+outputs:
+  - variable: total_count
+    data_type: integer
+  - variable: department_stats
+    data_type: dict
+
+environment: dev

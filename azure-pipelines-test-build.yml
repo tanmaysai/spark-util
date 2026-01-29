@@ -1,0 +1,102 @@
+# Test pipeline for validating Azure DevOps → Docker → ACR flow
+# This builds an image from the spark-util repo itself (no dynamic cloning)
+
+trigger: none  # Manual trigger only for testing
+
+parameters:
+  - name: imageTag
+    type: string
+    displayName: "Image Tag"
+    default: "test-build-$(Build.BuildId)"
+
+variables:
+  acrRegistry: 'crescendoimages.azurecr.io'
+  acrRepository: 'pyspark-script-runner'
+  baseImageTag: 'test9'
+  fullImagePath: $(acrRegistry)/$(acrRepository):$(imageTag)
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: Build
+    displayName: 'Build and Push Test Image'
+    jobs:
+      - job: BuildImage
+        displayName: 'Build Docker Image'
+        steps:
+          - checkout: self  # Checkout spark-util repo
+
+          - script: |
+              echo "=== Build Configuration ==="
+              echo "Repository: $(Build.Repository.Name)"
+              echo "Branch: $(Build.SourceBranchName)"
+              echo "Commit: $(Build.SourceVersion)"
+              echo "Image Tag: $(imageTag)"
+              echo "Full Image Path: $(fullImagePath)"
+              echo "Base Image: $(acrRegistry)/$(acrRepository):$(baseImageTag)"
+              echo ""
+              echo "=== Repository Contents ==="
+              ls -la
+              echo ""
+              if [ -f requirements.txt ]; then
+                echo "=== requirements.txt ==="
+                cat requirements.txt
+              else
+                echo "No requirements.txt found"
+              fi
+            displayName: 'Print Build Configuration'
+
+          - script: |
+              # Generate Dockerfile
+              cat > Dockerfile.test << 'DOCKERFILE'
+              # Base image with Spark and pre-installed packages
+              FROM $(acrRegistry)/$(acrRepository):$(baseImageTag)
+
+              # Copy repository into image
+              COPY . /opt/spark/work-dir/repo/
+
+              # Install requirements if present
+              RUN if [ -f /opt/spark/work-dir/repo/requirements.txt ]; then \
+                      echo "Installing requirements from requirements.txt..."; \
+                      python3 -m pip install --no-cache-dir -r /opt/spark/work-dir/repo/requirements.txt; \
+                  else \
+                      echo "No requirements.txt found, skipping pip install"; \
+                  fi
+
+              # Set PYTHONPATH for module imports from repository
+              ENV PYTHONPATH=/opt/spark/work-dir/repo:$PYTHONPATH
+
+              # Keep working directory
+              WORKDIR /opt/spark/work-dir
+
+              # Default command
+              CMD ["/bin/bash"]
+              DOCKERFILE
+
+              echo "=== Generated Dockerfile ==="
+              cat Dockerfile.test
+            displayName: 'Generate Dockerfile'
+
+          - task: Docker@2
+            displayName: 'Build and Push Docker Image'
+            inputs:
+              containerRegistry: 'crescendoimages-acr'  # Service connection name
+              repository: '$(acrRepository)'
+              command: 'buildAndPush'
+              Dockerfile: 'Dockerfile.test'
+              buildContext: '.'
+              tags: |
+                $(imageTag)
+              arguments: '--platform linux/amd64'
+
+          - script: |
+              echo ""
+              echo "=== ✅ Build Summary ==="
+              echo "Image built and pushed successfully!"
+              echo "Image: $(fullImagePath)"
+              echo "Tag: $(imageTag)"
+              echo ""
+              echo "To test this image:"
+              echo "  docker pull $(fullImagePath)"
+            displayName: 'Build Summary'
